@@ -38,7 +38,7 @@ spctl --assess --type execute --verbose build/Pulse.app
 # Re-zip so the download carries the stapled ticket.
 rm -f "$zip"
 ditto -c -k --sequesterRsrc --keepParent build/Pulse.app "$zip"
-shasum -a 256 "$zip" | tee "$zip.sha256"
+(cd dist && shasum -a 256 "${zip:t}" | tee "${zip:t}.sha256")
 
 git tag -a "$tag" -m "Pulse $version"
 git push origin "$tag"
