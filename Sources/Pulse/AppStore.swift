@@ -143,6 +143,7 @@ final class AppStore {
     func start() {
         guard !started else { return }
         started = true
+        if DebugSnapshot.probeIfRequested() { return }
         if DemoData.isEnabled {
             loadDemo()
             return

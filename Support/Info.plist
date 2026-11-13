@@ -28,6 +28,11 @@
 	<string>26.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>NSHumanReadableCopyright</key>
 	<string>Personal tool.</string>
 </dict>
