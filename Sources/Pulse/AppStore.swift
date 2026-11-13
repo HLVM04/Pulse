@@ -21,7 +21,24 @@ enum PanelRoute: Hashable {
 @MainActor
 @Observable
 final class AppStore {
-    static let shared = AppStore()
+    static let shared: AppStore = {
+        migrateFromLegacyBundleIdentifier()
+        return AppStore()
+    }()
+
+    /// Pulse 1.0–1.1 ran as dev.pulse.Pulse. Carries its settings and Keychain
+    /// items over to dk.hlvm.pulse on first launch, before anything reads them.
+    private static func migrateFromLegacyBundleIdentifier() {
+        let defaults = UserDefaults.standard
+        let doneKey = "migratedLegacyBundleIdentifier"
+        guard !defaults.bool(forKey: doneKey) else { return }
+        for (key, value) in defaults.persistentDomain(forName: "dev.pulse.Pulse") ?? [:]
+        where defaults.object(forKey: key) == nil {
+            defaults.set(value, forKey: key)
+        }
+        Keychain.migrateLegacyItems()
+        defaults.set(true, forKey: doneKey)
+    }
 
     // MARK: Settings
 

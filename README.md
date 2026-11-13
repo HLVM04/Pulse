@@ -27,15 +27,17 @@ Download `Pulse-x.y.z.zip` from [Releases](https://github.com/HLVM04/Pulse/relea
 To build it yourself instead (Xcode 26 or later):
 
 ```sh
-git clone git@github.com:HLVM04/Pulse.git && cd Pulse
+git clone https://github.com/HLVM04/Pulse.git && cd Pulse
 scripts/build-app.sh --install
 ```
 
 ## Set up
 
-1. **CLIProxyAPI.** Open Settings (gear icon), enter the server address and the management key. The key is stored in the Keychain.
+1. **CLIProxyAPI.** Open Settings (gear icon), enter the server address and the management key. The key is stored in the Keychain and sent with every quota request, so use `https://` unless the server is only reachable over a private network such as a tailnet.
 2. **T3 Code.** Click **Connect…** and approve Pulse in the browser. It asks for read-only access, and T3's sign-in lasts 30 days.
-3. **More machines** (optional). Under Settings → T3 Code, add another server by address, such as a VPS on your tailnet (`100.x.y.z` assumes port 3773). Each one signs in on its own, and its threads join the same list under the name you give it.
+3. **More machines** (optional). Under Settings → T3 Code, add another server by address, such as a VPS on your tailnet. An address without a scheme or port (`100.64.0.1`) means `http://` on port 3773. Each one signs in on its own, and its threads join the same list under the name you give it.
+
+Plain `http://` is allowed so tailnet and LAN addresses work. Settings live in the `dk.hlvm.pulse` defaults domain; tokens and keys live in the login Keychain.
 
 ## How it works
 
@@ -67,3 +69,7 @@ Compare the forecast with your server:
 ```sh
 PULSE_CPA_URL=https://your-host:8317 PULSE_CPA_KEY_FILE=~/key.txt swift test --filter liveQuotaPools
 ```
+
+## License
+
+[MIT](LICENSE)
