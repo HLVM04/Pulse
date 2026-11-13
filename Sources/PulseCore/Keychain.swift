@@ -4,8 +4,6 @@ import Security
 /// Generic-password items in the login keychain, scoped to Pulse.
 public enum Keychain {
     public static let service = "dk.hlvm.pulse"
-    /// The service Pulse 1.0–1.1 used, before the bundle identifier changed.
-    static let legacyService = "dev.pulse.Pulse"
 
     public enum Account {
         public static let cliproxyKey = "cliproxyapi-management-key"
@@ -50,37 +48,6 @@ public enum Keychain {
             kSecAttrAccount as String: account,
         ]
         SecItemDelete(query as CFDictionary)
-    }
-
-    /// Moves items saved under the old service name to the current one, once.
-    /// Items already present under the current service are left alone.
-    public static func migrateLegacyItems() {
-        let listQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: legacyService,
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(listQuery as CFDictionary, &result) == errSecSuccess,
-              let items = result as? [[String: Any]]
-        else { return }
-        for account in items.compactMap({ $0[kSecAttrAccount as String] as? String }) {
-            let itemQuery: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: legacyService,
-                kSecAttrAccount as String: account,
-            ]
-            var dataQuery = itemQuery
-            dataQuery[kSecReturnData as String] = true
-            dataQuery[kSecMatchLimit as String] = kSecMatchLimitOne
-            var data: AnyObject?
-            guard SecItemCopyMatching(dataQuery as CFDictionary, &data) == errSecSuccess,
-                  let value = (data as? Data).flatMap({ String(data: $0, encoding: .utf8) })
-            else { continue }
-            if read(account) == nil, !write(value, account: account) { continue }
-            SecItemDelete(itemQuery as CFDictionary)
-        }
     }
 
     public static func readT3Token(account: String = Account.t3Token) -> T3Token? {
