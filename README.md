@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/icon.png" width="112" alt="Pulse icon"></p>
+
 <h1 align="center">Pulse</h1>
 
 <p align="center">
@@ -20,12 +22,14 @@
 
 ## Install
 
+Download `Pulse-x.y.z.zip` from [Releases](https://github.com/HLVM04/Pulse/releases), unzip it and move Pulse to Applications. Releases are signed with Developer ID and notarized. Requires macOS 26 or later.
+
+To build it yourself instead (Xcode 26 or later):
+
 ```sh
 git clone git@github.com:HLVM04/Pulse.git && cd Pulse
 scripts/build-app.sh --install
 ```
-
-This builds a release version, signs it with your Apple Development identity (or ad hoc if there isn't one), copies it to `/Applications` and launches it. Requires macOS 26 and Xcode 26 or later.
 
 ## Set up
 
@@ -49,6 +53,12 @@ There are no dependencies: SwiftUI, Network and CryptoKit only. The app bundle i
 swift test                                    # pool math and parsing
 open -n --env PULSE_DEMO=1 /Applications/Pulse.app   # made-up data, for screenshots
 PULSE_SNAPSHOT=/tmp/pulse /Applications/Pulse.app/Contents/MacOS/Pulse   # render the panel to PNGs
+```
+
+Release (Developer ID signing, notarization, GitHub release; one-time setup is in the script):
+
+```sh
+scripts/release.sh 1.0.0
 ```
 
 Compare the forecast with your server:

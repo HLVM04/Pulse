@@ -56,7 +56,7 @@ public actor MCPClient {
         let result = try await request(method: "initialize", params: [
             "protocolVersion": protocolVersion,
             "capabilities": [String: Any](),
-            "clientInfo": ["name": "Pulse", "version": "0.1.0"],
+            "clientInfo": ["name": "Pulse", "version": "1.0.0"],
         ])
         let negotiated = J.str(result["protocolVersion"])
         if !negotiated.isEmpty { protocolVersion = negotiated }
