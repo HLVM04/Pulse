@@ -35,13 +35,14 @@ scripts/build-app.sh --install
 
 1. **CLIProxyAPI.** Open Settings (gear icon), enter the server address and the management key. The key is stored in the Keychain.
 2. **T3 Code.** Click **Connect…** and approve Pulse in the browser. It asks for read-only access, and T3's sign-in lasts 30 days.
+3. **More machines** (optional). Under Settings → T3 Code, add another server by address, such as a VPS on your tailnet (`100.x.y.z` assumes port 3773). Each one signs in on its own, and its threads join the same list under the name you give it.
 
 ## How it works
 
 | | Source | Refresh |
 |---|---|---|
 | Quota pool | CLIProxyAPI `GET /v8/management/observability/quota` | every minute |
-| Threads | T3 Code MCP: `t3_thread_list`, `t3_project_list`, `t3_environment_links` | every 4 s while open, 15 s otherwise |
+| Threads | T3 Code MCP on each server: `t3_thread_list`, `t3_project_list`, `t3_environment_links` | every 4 s while open, 15 s otherwise |
 
 The forecast in [`PoolMath.swift`](Sources/PulseCore/PoolMath.swift) is a line-for-line port of the CLIProxyAPI management center's `poolModel.ts`, so Pulse and the web page agree. T3's MCP can't approve permission requests, so a waiting thread opens in T3 instead of being approved from the panel.
 

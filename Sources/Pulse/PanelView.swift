@@ -48,14 +48,12 @@ private struct ThreadsSection: View {
 
     var body: some View {
         switch store.t3Status {
-        case .notConfigured, .expired:
+        case .notConfigured:
             PanelSection {
                 NoticeCard(
                     symbol: "link",
-                    title: store.t3Status == .expired ? "Sign in to T3 Code again" : "Connect T3 Code",
-                    message: store.t3Status == .expired
-                        ? "T3's sign-in lasts 30 days. Approve Pulse again to keep seeing your threads."
-                        : "Pulse reads your threads through T3's own sign-in, with read-only access.",
+                    title: "Connect T3 Code",
+                    message: "Pulse reads your threads through T3's own sign-in, with read-only access. Add other machines in Settings.",
                     tint: .accentColor
                 ) {
                     Button(store.t3Connecting ? "Waiting for T3 Code…" : "Connect…") { store.connectT3() }
@@ -64,6 +62,16 @@ private struct ThreadsSection: View {
                 }
             }
         default:
+            if !store.t3Problems.isEmpty {
+                PanelSection {
+                    VStack(spacing: 6) {
+                        ForEach(store.t3Problems, id: \.server.id) { problem in
+                            ServerProblemRow(server: problem.server, status: problem.status)
+                        }
+                    }
+                }
+                PanelDivider()
+            }
             if !store.waitingThreads.isEmpty {
                 PanelSection {
                     SectionHeader("Waiting for you")
@@ -74,11 +82,7 @@ private struct ThreadsSection: View {
                 PanelDivider()
             }
             PanelSection {
-                SectionHeader("Running") {
-                    if case .error(let message) = store.t3Status {
-                        Text(message).font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
-                    }
-                }
+                SectionHeader("Running")
                 if store.runningThreads.isEmpty && store.recentlyFinished.isEmpty {
                     Text(store.t3Status == .loading ? "Loading threads…" : "Nothing running right now.")
                         .font(.system(size: 12)).foregroundStyle(.tertiary)
@@ -88,6 +92,36 @@ private struct ThreadsSection: View {
                 ForEach(store.recentlyFinished.prefix(3)) { ThreadRow(thread: $0) }
             }
         }
+    }
+}
+
+/// A server that needs signing in again or can't be reached, while the others work.
+private struct ServerProblemRow: View {
+    @Environment(AppStore.self) private var store
+    let server: T3ServerConfig
+    let status: SourceStatus
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: status == .expired ? "person.badge.key" : "wifi.exclamationmark")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.orange)
+                .frame(width: 18)
+            Text(message).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+            Spacer()
+            if status == .expired {
+                Button(store.t3ConnectingId == server.id ? "Waiting…" : "Sign In") { store.connectT3(server.id) }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .disabled(store.t3Connecting)
+            }
+        }
+        .padding(.horizontal, 6)
+    }
+
+    private var message: String {
+        if status == .expired { return "Sign in to \(server.isThisMac ? "this Mac's T3 Code" : server.name) again" }
+        return server.isThisMac ? "T3 Code isn't running on this Mac" : "\(server.name) is unreachable"
     }
 }
 

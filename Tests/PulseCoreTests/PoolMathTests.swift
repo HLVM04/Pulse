@@ -138,3 +138,20 @@ private func credential(
     #expect(thread("gpt-6-luna").modelDisplay == "GPT-6 Luna")
     #expect(thread("claude-opus-5-5").deepLink.absoluteString == "t3code://threads/e/t")
 }
+
+@Test func serverAddressesNormalize() {
+    #expect(T3ServerConfig.normalizeAddress("100.64.0.1")?.absoluteString == "http://100.64.0.1:3773")
+    #expect(T3ServerConfig.normalizeAddress(" vps:4000 ")?.absoluteString == "http://vps:4000")
+    #expect(T3ServerConfig.normalizeAddress("https://t3.example.ts.net/some/path")?.absoluteString == "https://t3.example.ts.net")
+    #expect(T3ServerConfig.normalizeAddress("http://10.0.0.2:3773/")?.absoluteString == "http://10.0.0.2:3773")
+    #expect(T3ServerConfig.normalizeAddress("ftp://nope") == nil)
+    #expect(T3ServerConfig.normalizeAddress("") == nil)
+}
+
+@Test func thisMacKeepsTheOriginalKeychainAccount() {
+    #expect(T3ServerConfig.thisMac.keychainAccount == Keychain.Account.t3Token)
+    let vps = T3ServerConfig(id: "abc", name: "VPS", address: URL(string: "http://10.0.0.2:3773"))
+    #expect(vps.keychainAccount == "\(Keychain.Account.t3Token).abc")
+    #expect(vps.threadLabel == "VPS")
+    #expect(T3ServerConfig.thisMac.threadLabel == "Mac")
+}

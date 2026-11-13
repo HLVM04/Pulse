@@ -50,17 +50,17 @@ public enum Keychain {
         SecItemDelete(query as CFDictionary)
     }
 
-    public static func readT3Token() -> T3Token? {
-        guard let json = read(Account.t3Token) else { return nil }
+    public static func readT3Token(account: String = Account.t3Token) -> T3Token? {
+        guard let json = read(account) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try? decoder.decode(T3Token.self, from: Data(json.utf8))
     }
 
-    public static func writeT3Token(_ token: T3Token) {
+    public static func writeT3Token(_ token: T3Token, account: String = Account.t3Token) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(token) else { return }
-        write(String(decoding: data, as: UTF8.self), account: Account.t3Token)
+        write(String(decoding: data, as: UTF8.self), account: account)
     }
 }

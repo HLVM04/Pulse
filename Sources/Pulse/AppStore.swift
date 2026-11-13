@@ -66,13 +66,15 @@ final class AppStore {
     private(set) var quotaUpdatedAt: Date?
     private(set) var activeThreads: [T3Thread] = []
     private(set) var recentThreads: [T3Thread] = []
-    private(set) var t3Status: SourceStatus = .notConfigured
-    private(set) var t3Connecting = false
+    /// T3 Code servers, "This Mac" first. Persisted in UserDefaults; tokens live in the Keychain.
+    private(set) var t3Servers: [T3ServerConfig] = AppStore.loadServers()
+    private(set) var t3ServerStatus: [String: SourceStatus] = [:]
+    private(set) var t3ConnectingId: String?
     private(set) var now = Date()
     var route: PanelRoute = .main
 
     private var history: QuotaHistory?
-    private var t3Client: T3Client?
+    private var t3Clients: [String: T3Client] = [:]
     private var panelOpen = false
     private var lastThreadPoll = Date.distantPast
     private var lastQuotaPoll = Date.distantPast
@@ -89,6 +91,30 @@ final class AppStore {
         recentThreads.filter { ($0.updatedAt ?? .distantPast) > now.addingTimeInterval(-2 * 3600) }
     }
     var primaryPool: PoolSummary? { pools.first }
+
+    var t3Connecting: Bool { t3ConnectingId != nil }
+
+    func status(of server: T3ServerConfig) -> SourceStatus { t3ServerStatus[server.id] ?? .notConfigured }
+
+    /// Combined T3 state for the panel: fine if any server answers.
+    var t3Status: SourceStatus {
+        let statuses = t3Servers.map(status(of:))
+        if statuses.contains(.ok) { return .ok }
+        if statuses.contains(.loading) { return .loading }
+        if statuses.allSatisfy({ $0 == .notConfigured }) { return .notConfigured }
+        if let error = statuses.first(where: { if case .error = $0 { true } else { false } }) { return error }
+        return statuses.contains(.expired) ? .expired : .notConfigured
+    }
+
+    /// Servers that need attention while others work: expired sign-ins and unreachable servers.
+    var t3Problems: [(server: T3ServerConfig, status: SourceStatus)] {
+        t3Servers.compactMap { server in
+            switch status(of: server) {
+            case .expired, .error: (server, status(of: server))
+            default: nil
+            }
+        }
+    }
     var isPoolLow: Bool {
         guard let pool = primaryPool else { return false }
         return pool.fractionLeft < lowThreshold
@@ -121,7 +147,7 @@ final class AppStore {
             loadDemo()
             return
         }
-        setUpT3Client()
+        setUpT3Clients()
         Task { await self.loop() }
         DebugSnapshot.runIfRequested(self)
     }
@@ -134,7 +160,7 @@ final class AppStore {
         (activeThreads, recentThreads) = DemoData.threads(now: now)
         quotaStatus = .ok
         quotaUpdatedAt = now
-        t3Status = .ok
+        t3ServerStatus[T3ServerConfig.thisMacId] = .ok
         route = DemoData.route
     }
 
@@ -234,70 +260,176 @@ final class AppStore {
 
     // MARK: T3 Code
 
-    private func setUpT3Client() {
-        guard let token = Keychain.readT3Token() else {
-            t3Status = .notConfigured
-            t3Client = nil
+    private static let serversKey = "t3Servers"
+
+    private static func loadServers() -> [T3ServerConfig] {
+        var servers: [T3ServerConfig] = []
+        if let data = UserDefaults.standard.data(forKey: serversKey),
+           let saved = try? JSONDecoder().decode([T3ServerConfig].self, from: data) {
+            servers = saved
+        }
+        if !servers.contains(where: \.isThisMac) { servers.insert(.thisMac, at: 0) }
+        return servers
+    }
+
+    private func saveServers() {
+        if let data = try? JSONEncoder().encode(t3Servers) {
+            UserDefaults.standard.set(data, forKey: Self.serversKey)
+        }
+    }
+
+    private func setUpT3Clients() {
+        for server in t3Servers { setUpClient(for: server) }
+    }
+
+    private func setUpClient(for server: T3ServerConfig) {
+        guard let token = Keychain.readT3Token(account: server.keychainAccount) else {
+            t3Clients[server.id] = nil
+            t3ServerStatus[server.id] = .notConfigured
             return
         }
         if token.isExpired {
-            t3Status = .expired
-            t3Client = nil
+            t3Clients[server.id] = nil
+            t3ServerStatus[server.id] = .expired
             return
         }
-        t3Client = T3Client(origin: T3Server.localOrigin(), token: token.accessToken)
-        t3Status = .loading
+        t3Clients[server.id] = T3Client(
+            origin: server.origin, token: token.accessToken, label: server.threadLabel, isThisMac: server.isThisMac
+        )
+        t3ServerStatus[server.id] = .loading
     }
 
-    func connectT3() {
-        guard !t3Connecting else { return }
-        t3Connecting = true
+    /// Adds a T3 Code server by address and starts its sign-in.
+    func addT3Server(address: String) async throws {
+        guard let origin = T3ServerConfig.normalizeAddress(address) else {
+            throw SourceError.invalidResponse("Enter an address like 100.64.0.1 or https://host.")
+        }
+        let info = try await T3Server.environment(at: origin)
+        if let existing = t3Servers.first(where: { $0.environmentId == info.id || $0.address == origin }) {
+            throw SourceError.invalidResponse("\(existing.name) is already in the list.")
+        }
+        if info.id == t3Servers.first(where: \.isThisMac)?.environmentId {
+            throw SourceError.invalidResponse("That's this Mac's own T3 Code.")
+        }
+        let name = info.label.isEmpty ? (origin.host() ?? "Server") : info.label
+        let server = T3ServerConfig(id: UUID().uuidString, name: name, address: origin, environmentId: info.id)
+        t3Servers.append(server)
+        saveServers()
+        t3ServerStatus[server.id] = .notConfigured
+        connectT3(server.id)
+    }
+
+    func renameT3Server(_ id: String, to name: String) {
+        guard let index = t3Servers.firstIndex(where: { $0.id == id }), !t3Servers[index].isThisMac else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != t3Servers[index].name else { return }
+        t3Servers[index].name = trimmed
+        saveServers()
+        if t3Clients[id] != nil { setUpClient(for: t3Servers[index]) }
+        Task { await refreshThreads() }
+    }
+
+    func removeT3Server(_ id: String) {
+        guard let server = t3Servers.first(where: { $0.id == id }), !server.isThisMac else { return }
+        Keychain.delete(server.keychainAccount)
+        t3Servers.removeAll { $0.id == id }
+        t3Clients[id] = nil
+        t3ServerStatus[id] = nil
+        saveServers()
+        Task { await refreshThreads() }
+    }
+
+    func connectT3(_ id: String = T3ServerConfig.thisMacId) {
+        guard t3ConnectingId == nil, let server = t3Servers.first(where: { $0.id == id }) else { return }
+        t3ConnectingId = id
         Task {
-            defer { t3Connecting = false }
+            defer { t3ConnectingId = nil }
             do {
-                let token = try await T3OAuth.signIn(origin: T3Server.localOrigin()) { url in
+                let token = try await T3OAuth.signIn(origin: server.origin) { url in
                     NSWorkspace.shared.open(url)
                 }
-                Keychain.writeT3Token(token)
-                knownStatuses = nil
-                setUpT3Client()
+                Keychain.writeT3Token(token, account: server.keychainAccount)
+                setUpClient(for: server)
                 await refreshThreads()
                 NSApp.activate()
             } catch is CancellationError {
                 return
             } catch {
-                t3Status = .error(error.localizedDescription)
+                t3ServerStatus[id] = .error(error.localizedDescription)
             }
         }
     }
 
-    func disconnectT3() {
-        Keychain.delete(Keychain.Account.t3Token)
-        t3Client = nil
-        activeThreads = []
-        recentThreads = []
-        t3Status = .notConfigured
+    func disconnectT3(_ id: String = T3ServerConfig.thisMacId) {
+        guard let server = t3Servers.first(where: { $0.id == id }) else { return }
+        Keychain.delete(server.keychainAccount)
+        t3Clients[id] = nil
+        t3ServerStatus[id] = .notConfigured
+        Task { await refreshThreads() }
     }
 
     func refreshThreads() async {
         lastThreadPoll = Date()
-        guard let client = t3Client else { return }
-        do {
-            let snapshot = try await client.snapshot()
-            activeThreads = snapshot.active.filter { !$0.snoozed }
-            recentThreads = snapshot.recent
-            t3Status = .ok
-            notifyTransitions(snapshot)
-        } catch SourceError.unauthorized {
-            t3Status = .expired
-            t3Client = nil
-        } catch {
-            t3Status = .error(error.localizedDescription)
+        let clients = t3Clients
+        guard !clients.isEmpty else {
+            activeThreads = []
+            recentThreads = []
+            return
         }
+        let results = await withTaskGroup(of: (String, Result<T3Snapshot, Error>).self) { group in
+            for (id, client) in clients {
+                group.addTask {
+                    do { return (id, .success(try await client.snapshot())) } catch { return (id, .failure(error)) }
+                }
+            }
+            var collected: [(String, Result<T3Snapshot, Error>)] = []
+            for await result in group { collected.append(result) }
+            return collected
+        }
+
+        var snapshots: [T3Snapshot] = []
+        for (id, result) in results {
+            // The server may have been removed or signed out while we waited.
+            guard t3Clients[id] != nil else { continue }
+            switch result {
+            case .success(let snapshot):
+                t3ServerStatus[id] = .ok
+                snapshots.append(snapshot)
+                if let index = t3Servers.firstIndex(where: { $0.id == id }), t3Servers[index].environmentId != snapshot.environmentId {
+                    t3Servers[index].environmentId = snapshot.environmentId
+                    saveServers()
+                }
+            case .failure(SourceError.unauthorized):
+                t3ServerStatus[id] = .expired
+                t3Clients[id] = nil
+            case .failure(let error):
+                t3ServerStatus[id] = .error(error.localizedDescription)
+            }
+        }
+
+        // A machine can show up twice: directly, and as a machine linked to another server.
+        // Keep the direct copy, which carries the name chosen in Settings.
+        func merge(_ pick: (T3Snapshot) -> [T3Thread]) -> [T3Thread] {
+            var seen = Set<String>()
+            var merged: [T3Thread] = []
+            let ordered = snapshots.flatMap { snapshot in
+                pick(snapshot).map { (thread: $0, direct: $0.environmentId == snapshot.environmentId) }
+            }
+            // Direct copies first (Swift's sort is stable), then drop later duplicates.
+            for item in ordered.sorted(by: { $0.direct && !$1.direct }) where seen.insert(item.thread.key).inserted {
+                merged.append(item.thread)
+            }
+            return merged.sorted { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
+        }
+        let active = merge(\.active)
+        let recent = merge(\.recent)
+        activeThreads = active.filter { !$0.snoozed }
+        recentThreads = recent
+        notifyTransitions(active: active, recent: recent)
     }
 
-    private func notifyTransitions(_ snapshot: T3Snapshot) {
-        let threads = snapshot.active + snapshot.recent
+    private func notifyTransitions(active: [T3Thread], recent: [T3Thread]) {
+        let threads = active + recent
         let previous = knownStatuses
         var next: [String: String] = [:]
         for thread in threads { next[thread.key] = thread.status }

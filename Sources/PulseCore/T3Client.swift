@@ -64,6 +64,8 @@ public struct T3Thread: Sendable, Identifiable, Hashable {
 }
 
 public struct T3Snapshot: Sendable, Equatable {
+    /// The environment of the server that was asked (linked machines' threads are included too).
+    public var environmentId: String
     public var active: [T3Thread]
     public var recent: [T3Thread]
     public var fetchedAt: Date
@@ -87,17 +89,23 @@ public enum T3Server {
 public actor T3Client {
     public let origin: URL
     private let mcp: MCPClient
+    private let labelOverride: String?
+    private let isThisMac: Bool
     private var localEnvironment: (id: String, label: String)?
     private var projectTitles: [String: String] = [:]
     private var projectsFetchedAt: [String: Date] = [:]
 
-    public init(origin: URL, token: String) {
+    /// `label` names this server's own threads; `isThisMac` picks the laptop glyph over the server one.
+    public init(origin: URL, token: String, label: String? = nil, isThisMac: Bool = true) {
         self.origin = origin
         self.mcp = MCPClient(endpoint: origin.appending(path: "mcp"), token: token)
+        self.labelOverride = label
+        self.isThisMac = isThisMac
     }
 
     public func snapshot() async throws -> T3Snapshot {
         let local = try await localEnvironmentInfo()
+        // `isLocal` means "this server's own environment": no environmentId argument needed.
         var environments: [(id: String, label: String, isLocal: Bool)] = [(local.id, local.label, true)]
         if let links = try? await call("t3_environment_links", [:]) {
             for link in J.arr(links["links"]).compactMap(J.obj) where J.str(link["status"]) == "reachable" {
@@ -119,7 +127,9 @@ public actor T3Client {
             }
         }
         let byUpdate: (T3Thread, T3Thread) -> Bool = { ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast) }
-        return T3Snapshot(active: active.sorted(by: byUpdate), recent: recent.sorted(by: byUpdate), fetchedAt: Date())
+        return T3Snapshot(
+            environmentId: local.id, active: active.sorted(by: byUpdate), recent: recent.sorted(by: byUpdate), fetchedAt: Date()
+        )
     }
 
     private func threads(
@@ -144,7 +154,7 @@ public actor T3Client {
                 updatedAt: J.date(raw["updatedAt"]),
                 environmentId: environment.id,
                 environmentLabel: environment.label,
-                isLocalEnvironment: environment.isLocal,
+                isLocalEnvironment: environment.isLocal && isThisMac,
                 projectTitle: projectTitles["\(environment.id)/\(projectId)"],
                 snoozed: J.bool(raw["snoozed"])
             )
@@ -170,20 +180,16 @@ public actor T3Client {
 
     private func localEnvironmentInfo() async throws -> (id: String, label: String) {
         if let localEnvironment { return localEnvironment }
-        let url = origin.appending(path: ".well-known/t3/environment")
-        let data: Data
+        let info: T3EnvironmentInfo
         do {
-            (data, _) = try await URLSession.shared.data(from: url)
-        } catch {
-            throw SourceError.unreachable("T3 Code isn't running.")
+            info = try await T3Server.environment(at: origin)
+        } catch SourceError.unreachable {
+            throw SourceError.unreachable(isThisMac ? "T3 Code isn't running." : "\(labelOverride ?? "The server") is unreachable.")
         }
-        let object = J.obj(try? J.parse(data)) ?? [:]
-        let id = J.str(object["environmentId"])
-        guard !id.isEmpty else { throw SourceError.invalidResponse("T3 Code didn't say which machine this is.") }
-        let platform = J.obj(object["platform"]) ?? [:]
-        let label = J.str(platform["machine"]) == "laptop" || J.str(platform["os"]) == "darwin" ? "Mac" : J.str(object["label"])
-        localEnvironment = (id, label)
-        return (id, label)
+        let fallback = info.label.isEmpty ? (origin.host() ?? "Server") : info.label
+        let label = labelOverride ?? (isThisMac ? "Mac" : fallback)
+        localEnvironment = (info.id, label)
+        return (info.id, label)
     }
 
     private func call(_ tool: String, _ arguments: [String: Any]) async throws -> [String: Any] {
